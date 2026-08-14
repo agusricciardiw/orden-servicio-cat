@@ -32,8 +32,12 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 # ==========================================================================
 
 AQUI = Path(__file__).parent
-# Carpeta de Descargas del usuario, funcione en Windows o en Mac
-XLSX_DEFECTO = Path.home() / "Downloads" / "SISTEMA DE PREORDEN.xlsx"
+# Donde se busca la planilla si no se pasa --xlsx. Se toma la mas reciente
+# que coincida con el patron: al bajarla de Excel Online varias veces, el
+# sistema le agrega "(1)", "(2)", etc., y renombrarla a mano cada semana es
+# justo el paso que se olvida.
+CARPETA_DESCARGAS = Path.home() / "Downloads"
+PATRON_XLSX = "SISTEMA DE PREORDEN*.xlsx"
 PLANTILLA_SEMANA = AQUI / "plantilla_OS_SEMANA.docx"
 PLANTILLA_FINDE = AQUI / "plantilla_OS_FINDE.docx"
 DIR_SALIDA = AQUI / "salida"
@@ -155,8 +159,11 @@ REPETIR_TITULO = True
 FILA_ENTERA = True
 
 # Exportar tambien a PDF con el nombre que pide la Guia. Requiere Word.
+# El numero sale del titulo de la plantilla ("Orden de Servicio N° 2006-2026-O"
+# -> ODS_2006-2026-O.pdf), asi no hay que acordarse de cambiarlo en dos
+# lugares. Si el titulo no tiene numero, se usan estos de respaldo.
 EXPORTAR_PDF = True
-NUMERO_ORDEN = '032'
+NUMERO_ORDEN = '000'
 ANIO_ORDEN = '2026'
 
 # Sacar del documento final los comentarios de Word heredados de la plantilla
@@ -285,10 +292,34 @@ W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 # LECTURA DE LA PLANILLA
 # ==========================================================================
 
-COLS = dict(id=1, tipo=2, servicio=3, ubicacion=4, altura=5, calle2=6,
-            calle3=7, base=8, obs=9, funcion=10, dia=11, hora=12, turno=13)
-DOTACION_SEMANA = [14, 15, 16, 17]          # AT TM / TT / TIN / TN
-DOTACION_FINDE = [14, 15, 16, 17, 18]       # AT FSD S/D, FSI S/D, FSN D
+# --------------------------------------------------------------------------
+# Se lee la hoja de CARGA (SEMANA / FINDE), no la hoja PREORDEN.
+#
+# PREORDEN es el resultado de dos FILTER() derramados, y eso trae dos
+# problemas: (1) al bajar el libro, los valores cacheados del derrame llegan
+# incompletos -- la columna del ID venia vacia o en #VALUE! y se perdian
+# cientos de servicios; (2) el rango del FILTER esta escrito a mano
+# (SEMANA!B7:Q482) y se queda corto cuando la hoja crece, dejando afuera todo
+# lo que se cargue mas abajo, sin avisar.
+#
+# Leyendo la hoja de carga y aplicando aca la misma condicion (la casilla
+# AÑADIDO) el resultado es identico al que deberia dar PREORDEN, pero no
+# depende ni del cache de Excel ni de que alguien mantenga el rango.
+# --------------------------------------------------------------------------
+HOJA_CARGA = {False: 'SEMANA', True: 'FINDE'}
+FILA_ENCABEZADO = 6
+COLUMNA_VALIDACION = 'AÑADIDO'
+PREFIJO_DOTACION = 'AT '
+
+# Nombre de encabezado -> clave interna
+MAPA_COLUMNAS = {
+    'ID': 'id', 'TIPO': 'tipo', 'SERVICIO': 'servicio',
+    'UBICACION': 'ubicacion', 'UBICACIÓN': 'ubicacion',
+    'ALTURA': 'altura', 'CALLE 2': 'calle2', 'CALLE 3': 'calle3',
+    'BASE': 'base', 'OBSERVACIONES': 'obs', 'FUNCION': 'funcion',
+    'FUNCIÓN': 'funcion', 'DIA': 'dia', 'DÍA': 'dia', 'HORA': 'hora',
+    'TURNO': 'turno',
+}
 
 DIAS = ['LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB', 'DOM']
 ALIAS_DIA = {
@@ -440,20 +471,61 @@ def clave_turno(s):
     return (ORDEN_TURNO.get(primero, ORDEN_TURNO.get(s, 98)), s)
 
 
-def leer_servicios(xlsx, hoja, dotacion_cols):
+def mapear_columnas(ws):
+    """Ubica las columnas por el texto del encabezado, no por posicion fija:
+    si alguien inserta una columna en la planilla, esto sigue funcionando."""
+    cols, dotacion = {}, []
+    validacion = None
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=FILA_ENCABEZADO, column=c).value
+        if v is None:
+            continue
+        nombre = str(v).strip().upper()
+        if nombre in MAPA_COLUMNAS:
+            cols.setdefault(MAPA_COLUMNAS[nombre], c)
+        elif nombre.startswith(PREFIJO_DOTACION):
+            dotacion.append((c, str(v).strip()))
+        elif nombre == COLUMNA_VALIDACION:
+            validacion = c
+    faltan = {'id', 'base', 'servicio', 'funcion', 'dia'} - set(cols)
+    if faltan:
+        sys.exit(f"En la hoja {ws.title!r} no encuentro las columnas: "
+                 f"{', '.join(sorted(faltan))}")
+    if validacion is None:
+        sys.exit(f"En la hoja {ws.title!r} no encuentro la columna "
+                 f"{COLUMNA_VALIDACION!r}, que es la que marca los servicios "
+                 f"validados.")
+    return cols, dotacion, validacion
+
+
+def leer_servicios(xlsx, finde):
+    hoja = HOJA_CARGA[bool(finde)]
     wb = openpyxl.load_workbook(xlsx, data_only=True)
     if hoja not in wb.sheetnames:
         sys.exit(f"La hoja {hoja!r} no existe en {xlsx}")
     ws = wb[hoja]
-    filas, sin_base = [], []
+    COLS, dotacion_cols, col_val = mapear_columnas(ws)
+
+    esperadas = len([c for c in (CAMPOS_FINDE if finde else CAMPOS_SEMANA)
+                     if c[0].startswith('ag_')])
+    if len(dotacion_cols) != esperadas:
+        print(f"  !! La hoja {hoja} tiene {len(dotacion_cols)} columnas de "
+              f"dotacion ({', '.join(n for _, n in dotacion_cols)})\n"
+              f"     pero la tabla esta definida con {esperadas}. "
+              f"Revisar CAMPOS_{'FINDE' if finde else 'SEMANA'}.")
+
+    filas, sin_base, cargados = [], [], 0
     for r in range(7, ws.max_row + 1):
         idv = limpiar(ws.cell(row=r, column=COLS['id']).value)
         if not idv:
             continue
-        g = lambda k: ws.cell(row=r, column=COLS[k]).value
+        cargados += 1
+        if ws.cell(row=r, column=col_val).value is not True:
+            continue          # todavia no validado
+        g = lambda k: ws.cell(row=r, column=COLS[k]).value if k in COLS else None
 
         dot = []
-        for c in dotacion_cols:
+        for c, _ in dotacion_cols:
             v = ws.cell(row=r, column=c).value
             dot.append(int(v) if isinstance(v, (int, float)) else 0)
 
@@ -499,6 +571,10 @@ def leer_servicios(xlsx, hoja, dotacion_cols):
             sin_base.append(reg)
             continue
         filas.append(reg)
+
+    validados = len(filas) + len(sin_base)
+    print(f"  Hoja {hoja}: {cargados} servicios cargados, {validados} "
+          f"validados ({COLUMNA_VALIDACION} tildado)")
     return filas, sin_base
 
 
@@ -989,6 +1065,52 @@ def pdf_bloqueado(pdf_path):
         return True
 
 
+def numero_de_orden(doc):
+    """Saca el numero del titulo de la plantilla: de
+    'Orden de Servicio N° 2006-2026-O' devuelve '2006-2026-O'."""
+    for p in doc.element.body.findall(W + 'p'):
+        txt = ''.join(n.text or '' for n in p.iter() if n.tag == W + 't').strip()
+        if txt.lower().startswith('orden de servicio'):
+            m = re.search(r'N[°ºo]\s*([\w./-]+)', txt)
+            if m:
+                return m.group(1).strip('.-')
+            break
+    return None
+
+
+def buscar_planilla(ruta=None):
+    """Si no se pasa --xlsx, busca en Descargas la planilla mas reciente que
+    coincida con el patron, ignorando el '(1)' que agrega el navegador."""
+    if ruta:
+        p = Path(ruta).expanduser()
+        if not p.exists():
+            sys.exit(f"No encuentro la planilla: {p}")
+        return p
+
+    candidatos = sorted(CARPETA_DESCARGAS.glob(PATRON_XLSX),
+                        key=lambda x: x.stat().st_mtime, reverse=True)
+    candidatos = [c for c in candidatos if not c.name.startswith('~$')]
+    if not candidatos:
+        sys.exit(f"\nNo encontre ninguna planilla en {CARPETA_DESCARGAS}\n"
+                 f"que se llame como {PATRON_XLSX!r}.\n\n"
+                 f"Baja el libro desde Excel Online y dejalo en Descargas, "
+                 f"o pasalo con:\n"
+                 f"    python generar_orden.py --xlsx \"ruta\\al\\archivo.xlsx\"\n")
+
+    elegida = candidatos[0]
+    if len(candidatos) > 1:
+        print(f"\n  Hay {len(candidatos)} planillas en Descargas; uso la mas "
+              f"reciente:")
+        for c in candidatos:
+            marca = '  <-- esta' if c is elegida else ''
+            fecha = datetime.datetime.fromtimestamp(c.stat().st_mtime)
+            print(f"     {fecha:%d/%m %H:%M}  {c.name}{marca}")
+        print("     (si no es la correcta, borra las viejas o usa --xlsx)")
+    else:
+        print(f"\n  Planilla: {elegida.name}")
+    return elegida
+
+
 def buscar_soffice():
     """LibreOffice, para convertir a PDF donde no hay Word por COM (Mac)."""
     import shutil as sh
@@ -1115,10 +1237,9 @@ def agrupar(servicios, ambito, solo=None):
 
 
 def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
-    hoja = 'PREORDEN FINDE' if finde else 'PREORDEN'
-    dot = DOTACION_FINDE if finde else DOTACION_SEMANA
+    hoja = HOJA_CARGA[bool(finde)]
     campos = CAMPOS_FINDE if finde else CAMPOS_SEMANA
-    servicios, sin_base = leer_servicios(xlsx, hoja, dot)
+    servicios, sin_base = leer_servicios(xlsx, finde)
 
     en_comuna = [s for s in servicios if s['comuna'] is not None]
     if finde and FINDE_SOLO_BASES:
@@ -1259,13 +1380,20 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
     print(f"\n  -> {salida}")
 
     if EXPORTAR_PDF:
-        etiqueta = {'completa': 'Semanal', 'comunas': 'Comunas',
-                    'bases': 'Bases'}[ambito]
-        if finde:
-            etiqueta = 'Finde'
+        numero = numero_de_orden(doc)
+        if numero:
+            etiqueta = numero
+        else:
+            etiqueta = {'completa': 'Semanal', 'comunas': 'Comunas',
+                        'bases': 'Bases'}[ambito]
+            if finde:
+                etiqueta = 'Finde'
+            etiqueta += f"_{NUMERO_ORDEN}_{ANIO_ORDEN}"
+            print(f"  (la plantilla no tiene N° de orden en el titulo; "
+                  f"uso {etiqueta})")
         if solo:
             etiqueta += '_' + re.sub(r'\W+', '', solo)
-        pdf = salida.parent / f"ODS_{etiqueta}_{NUMERO_ORDEN}_{ANIO_ORDEN}.pdf"
+        pdf = salida.parent / f"ODS_{etiqueta}.pdf"
         if pdf_bloqueado(pdf):
             print(f"\n  !! El Word se generó bien, pero NO pude actualizar el PDF:\n"
                   f"     {pdf.name} está abierto en otro programa.\n"
@@ -1281,7 +1409,8 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--xlsx', default=str(XLSX_DEFECTO))
+    ap.add_argument('--xlsx', default=None,
+                    help='planilla a usar; por defecto la mas reciente de Descargas')
     ap.add_argument('--ambito', choices=['completa', 'comunas', 'bases'],
                     default='completa',
                     help='completa = bases + comunas en un solo documento')
@@ -1306,9 +1435,7 @@ def main():
     if a.tam:
         globals()['TAM'] = a.tam * 2
 
-    xlsx = Path(a.xlsx)
-    if not xlsx.exists():
-        sys.exit(f"No encuentro la planilla: {xlsx}")
+    xlsx = buscar_planilla(a.xlsx)
 
     orientacion = 'vertical' if a.vertical else ORIENTACION
 
