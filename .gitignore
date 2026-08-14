@@ -1,0 +1,26 @@
+# --------------------------------------------------------------------------
+# NUNCA versionar lo generado.
+#
+# Las ordenes de servicio llevan datos personales de terceros: telefonos de
+# contacto de colegios, mails, nombres de referentes, y el despliegue
+# operativo completo de la Direccion. No van a un repositorio.
+# --------------------------------------------------------------------------
+salida/
+_preview/
+*.pdf
+
+# La planilla de origen tampoco: es el dato crudo de la operacion
+SISTEMA DE PREORDEN.xlsx
+*.xlsx
+*.xlsm
+
+# Word deja estos al abrir un archivo
+~$*
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
