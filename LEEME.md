@@ -55,10 +55,12 @@ Si se borra alguno, el generador avisa y no genera.
 python generar_orden.py
 ```
 
-Salen en la carpeta `salida\`:
-- `Orden de servicio SEMANA.docx`
-- `ODS_Semanal_032_2026.pdf`
+Salen las dos órdenes en la carpeta `salida\`, cada una en Word y en PDF:
 
+- `Orden de servicio SEMANA.docx` + `ODS_2006-2026-O.pdf`
+- `Orden de servicio FINDE.docx` + `ODS_2006-2026-F.pdf`
+
+El nombre del PDF sale del N° de orden que tenga el título de cada plantilla.
 Ya vienen con el anexo de imágenes adentro. Listo para mandar.
 
 ---
@@ -92,8 +94,9 @@ Detalles:
 
 | Comando | Qué genera |
 |---|---|
-| `python generar_orden.py` | **La orden semanal completa**: bases + comunas |
-| `python generar_orden.py --finde` | A partir de `PREORDEN FINDE` |
+| `python generar_orden.py` | **Las dos órdenes**: la semanal y la de fin de semana |
+| `python generar_orden.py --semana` | Sólo la semanal (bases + comunas) |
+| `python generar_orden.py --finde` | Sólo la de fin de semana (sólo bases) |
 | `python generar_orden.py --ambito bases` | Sólo las bases operativas |
 | `python generar_orden.py --ambito comunas` | Sólo las zonas comunales |
 | `python generar_orden.py --zona CENTRO` | Un solo anexo, para revisar rápido |

@@ -1325,7 +1325,7 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
     print(f"\n=== {hoja} / {ambito} / {orientacion} / orden {ORDEN_SERVICIOS} ===")
     total, familia_previa = 0, None
     for g in grupos:
-        if g['familia'] != familia_previa:
+        if g.get('familia') and g['familia'] != familia_previa:
             print(f"  -- {g['familia']}")
             familia_previa = g['familia']
         if g.get('imagenes'):
@@ -1414,7 +1414,10 @@ def main():
     ap.add_argument('--ambito', choices=['completa', 'comunas', 'bases'],
                     default='completa',
                     help='completa = bases + comunas en un solo documento')
-    ap.add_argument('--finde', action='store_true')
+    ap.add_argument('--finde', action='store_true',
+                    help='generar SOLO la orden de fin de semana')
+    ap.add_argument('--semana', action='store_true',
+                    help='generar SOLO la orden semanal')
     ap.add_argument('--vertical', action='store_true',
                     help='forzar anexos verticales')
     ap.add_argument('--zona', default=None,
@@ -1436,26 +1439,37 @@ def main():
         globals()['TAM'] = a.tam * 2
 
     xlsx = buscar_planilla(a.xlsx)
-
     orientacion = 'vertical' if a.vertical else ORIENTACION
 
-    plantilla = PLANTILLA_FINDE if (a.finde and PLANTILLA_FINDE.exists()) \
-        else PLANTILLA_SEMANA
-    if not plantilla.exists():
-        sys.exit(f"No encuentro la plantilla: {plantilla}\n"
-                 f"Corre primero: python migrar_plantilla.py")
+    # Sin flags se generan las dos ordenes: es lo que hace falta cada semana
+    # y olvidarse del --finde era el error facil de cometer.
+    if a.finde:
+        ordenes = [True]
+    elif a.semana:
+        ordenes = [False]
+    elif a.salida or a.zona:
+        ordenes = [False]     # apuntan a un documento puntual
+    else:
+        ordenes = [False, True]
 
-    sufijo = 'FINDE' if a.finde else 'SEMANA'
-    nombre = "Orden de servicio " + sufijo
-    if a.ambito != 'completa':
-        nombre += f" ({a.ambito})"
-    if a.zona:
-        nombre += f" - {a.zona.upper()}"
-    if orientacion == 'vertical':
-        nombre += " (vertical)"
-    salida = Path(a.salida) if a.salida else DIR_SALIDA / f"{nombre}.docx"
+    for finde in ordenes:
+        plantilla = PLANTILLA_FINDE if (finde and PLANTILLA_FINDE.exists()) \
+            else PLANTILLA_SEMANA
+        if not plantilla.exists():
+            sys.exit(f"No encuentro la plantilla: {plantilla}")
+        if finde and not PLANTILLA_FINDE.exists():
+            print("  AVISO: no existe plantilla_OS_FINDE.docx; uso la semanal.")
 
-    generar(xlsx, a.ambito, a.finde, plantilla, salida, orientacion, a.zona)
+        nombre = "Orden de servicio " + ('FINDE' if finde else 'SEMANA')
+        if a.ambito != 'completa':
+            nombre += f" ({a.ambito})"
+        if a.zona:
+            nombre += f" - {a.zona.upper()}"
+        if orientacion == 'vertical':
+            nombre += " (vertical)"
+        salida = Path(a.salida) if a.salida else DIR_SALIDA / f"{nombre}.docx"
+
+        generar(xlsx, a.ambito, finde, plantilla, salida, orientacion, a.zona)
 
 
 if __name__ == '__main__':
