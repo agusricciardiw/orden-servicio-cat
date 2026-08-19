@@ -284,10 +284,12 @@ pierda.
 Se copia la carpeta entera y listo. Hace falta:
 
 ```bash
-pip install openpyxl python-docx
+pip install -r requirements.txt
 ```
 
-Más `pypdfium2` sólo si se va a usar `ver.py`.
+Eso instala `openpyxl` y `python-docx`, que es todo lo que necesita para
+generar los Word. Las dependencias opcionales están comentadas dentro del
+mismo `requirements.txt`.
 
 **En Windows** el PDF lo genera Word, que ya viene con Office. Si falla con
 `ImportError`, falta `pip install pywin32`.
