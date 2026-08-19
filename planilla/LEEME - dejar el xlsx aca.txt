@@ -1,0 +1,13 @@
+DEJAR ACA EL SISTEMA DE PREORDEN
+================================
+
+1. Entrar al libro en Excel Online.
+2. Archivo -> Guardar como -> Descargar una copia.
+3. Mover el archivo descargado a ESTA carpeta.
+4. Volver a la carpeta de arriba y ejecutar el generador.
+
+El nombre puede tener sufijos: "SISTEMA DE PREORDEN (1).xlsx" sirve igual.
+Si hay varios, se usa el mas reciente y el generador avisa cual eligio.
+
+No hace falta borrar el de la semana pasada, pero conviene: asi no hay
+manera de generar con datos viejos por error.

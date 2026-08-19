@@ -36,6 +36,10 @@ AQUI = Path(__file__).parent
 # que coincida con el patron: al bajarla de Excel Online varias veces, el
 # sistema le agrega "(1)", "(2)", etc., y renombrarla a mano cada semana es
 # justo el paso que se olvida.
+# Se busca primero en la carpeta "planilla" de este mismo proyecto: es lo mas
+# simple de explicar a quien opera -- baja el libro de Excel Online y lo deja
+# ahi. Si esa carpeta esta vacia, se prueba con Descargas.
+CARPETA_PLANILLA = AQUI / "planilla"
 CARPETA_DESCARGAS = Path.home() / "Downloads"
 PATRON_XLSX = "SISTEMA DE PREORDEN*.xlsx"
 PLANTILLA_SEMANA = AQUI / "plantilla_OS_SEMANA.docx"
@@ -1087,28 +1091,35 @@ def buscar_planilla(ruta=None):
             sys.exit(f"No encuentro la planilla: {p}")
         return p
 
-    candidatos = sorted(CARPETA_DESCARGAS.glob(PATRON_XLSX),
-                        key=lambda x: x.stat().st_mtime, reverse=True)
-    candidatos = [c for c in candidatos if not c.name.startswith('~$')]
-    if not candidatos:
-        sys.exit(f"\nNo encontre ninguna planilla en {CARPETA_DESCARGAS}\n"
-                 f"que se llame como {PATRON_XLSX!r}.\n\n"
-                 f"Baja el libro desde Excel Online y dejalo en Descargas, "
-                 f"o pasalo con:\n"
-                 f"    python generar_orden.py --xlsx \"ruta\\al\\archivo.xlsx\"\n")
+    CARPETA_PLANILLA.mkdir(exist_ok=True)
+    for carpeta, donde in ((CARPETA_PLANILLA, 'la carpeta planilla'),
+                           (CARPETA_DESCARGAS, 'Descargas')):
+        candidatos = sorted(
+            (c for c in carpeta.glob(PATRON_XLSX)
+             if not c.name.startswith('~$')),
+            key=lambda x: x.stat().st_mtime, reverse=True)
+        if not candidatos:
+            continue
+        elegida = candidatos[0]
+        if len(candidatos) > 1:
+            print(f"\n  Hay {len(candidatos)} planillas en {donde}; "
+                  f"uso la mas reciente:")
+            for c in candidatos:
+                marca = '  <-- esta' if c is elegida else ''
+                fecha = datetime.datetime.fromtimestamp(c.stat().st_mtime)
+                print(f"     {fecha:%d/%m %H:%M}  {c.name}{marca}")
+            print("     (si no es la correcta, borra las viejas o usa --xlsx)")
+        else:
+            print(f"\n  Planilla: {elegida.name}   (en {donde})")
+        return elegida
 
-    elegida = candidatos[0]
-    if len(candidatos) > 1:
-        print(f"\n  Hay {len(candidatos)} planillas en Descargas; uso la mas "
-              f"reciente:")
-        for c in candidatos:
-            marca = '  <-- esta' if c is elegida else ''
-            fecha = datetime.datetime.fromtimestamp(c.stat().st_mtime)
-            print(f"     {fecha:%d/%m %H:%M}  {c.name}{marca}")
-        print("     (si no es la correcta, borra las viejas o usa --xlsx)")
-    else:
-        print(f"\n  Planilla: {elegida.name}")
-    return elegida
+    sys.exit(
+        f"\nNo encontre la planilla.\n\n"
+        f"Baja el libro desde Excel Online y dejalo en esta carpeta:\n\n"
+        f"    {CARPETA_PLANILLA}\n\n"
+        f"El nombre puede tener sufijos: 'SISTEMA DE PREORDEN (1).xlsx' "
+        f"se toma igual.\n"
+        f"Tambien se busca en {CARPETA_DESCARGAS}.\n")
 
 
 def buscar_soffice():

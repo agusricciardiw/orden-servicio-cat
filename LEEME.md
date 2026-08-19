@@ -26,7 +26,13 @@ el índice.
 
 ### 1. Bajar la planilla
 Desde Excel Online: **Archivo → Guardar como → Descargar una copia**.
-Dejala en `Descargas` con el nombre `SISTEMA DE PREORDEN.xlsx`.
+Dejá el archivo en la carpeta **`planilla\`**, acá adentro del proyecto.
+
+El nombre puede tener sufijos: `SISTEMA DE PREORDEN (1).xlsx` sirve igual. Si
+hay varios, usa el más reciente y avisa cuál eligió.
+
+> Si en `planilla\` no hay nada, también busca en `Descargas`. Y con `--xlsx`
+> se le pasa cualquier ruta.
 
 > El libro sigue online para que CGM, Planeamiento, CEF y Comunas carguen en
 > simultáneo. El generador trabaja siempre sobre la copia bajada.
@@ -334,6 +340,7 @@ Dos detalles:
 ```
 OrdenServicioCAT\
   generar_orden.py           <- el generador
+  planilla\                   <- ACA se deja el xlsx bajado de Excel Online
   plantilla_OS_SEMANA.docx   <- texto legal de la semanal, se edita cada semana
   plantilla_OS_FINDE.docx    <- texto legal de la de fin de semana
   anexo_imagenes_SEMANA.docx <- las imágenes de la semanal, se completa a mano
