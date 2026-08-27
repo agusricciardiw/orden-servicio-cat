@@ -315,6 +315,14 @@ FILA_ENCABEZADO = 6
 COLUMNA_VALIDACION = 'AÑADIDO'
 PREFIJO_DOTACION = 'AT '
 
+# La celda AÑADIDO es una formula: = Y(CGM; PLANI; O(GO; DG))
+# Al bajar el libro puede llegar sin recalcular, o con el texto 'VERDADERO'
+# en vez del booleano, o pisada a mano. Si no se entiende lo que trae, en
+# vez de descartar la fila en silencio se recalcula con estas columnas.
+COLUMNAS_VISTO = ('CGM', 'PLANI', 'GO', 'DG')
+VISTOS_OBLIGATORIOS = ('CGM', 'PLANI')     # tienen que estar los dos
+VISTOS_ALTERNATIVOS = ('GO', 'DG')         # alcanza con cualquiera
+
 # Nombre de encabezado -> clave interna
 MAPA_COLUMNAS = {
     'ID': 'id', 'TIPO': 'tipo', 'SERVICIO': 'servicio',
@@ -475,10 +483,40 @@ def clave_turno(s):
     return (ORDEN_TURNO.get(primero, ORDEN_TURNO.get(s, 98)), s)
 
 
+def es_verdadero(v):
+    """Lee un tilde de Excel con tolerancia. Devuelve True, False, o None
+    cuando la celda no dice nada confiable (vacia, formula sin recalcular,
+    o un valor que no se entiende)."""
+    if v is True:
+        return True
+    if v is False:
+        return False
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().upper()
+    if s in ('VERDADERO', 'TRUE', 'V', 'SI', 'SÍ', 'X', '1'):
+        return True
+    if s in ('FALSO', 'FALSE', 'F', 'NO', '0', ''):
+        return False
+    return None
+
+
+def validado_por_vistos(ws, r, vistos):
+    """Reproduce la formula de AÑADIDO a partir de los vistos.
+    Devuelve None si faltan columnas para poder decidir."""
+    if not all(k in vistos for k in VISTOS_OBLIGATORIOS + VISTOS_ALTERNATIVOS):
+        return None
+    val = lambda k: es_verdadero(ws.cell(row=r, column=vistos[k]).value) is True
+    return (all(val(k) for k in VISTOS_OBLIGATORIOS)
+            and any(val(k) for k in VISTOS_ALTERNATIVOS))
+
+
 def mapear_columnas(ws):
     """Ubica las columnas por el texto del encabezado, no por posicion fija:
     si alguien inserta una columna en la planilla, esto sigue funcionando."""
-    cols, dotacion = {}, []
+    cols, dotacion, vistos = {}, [], {}
     validacion = None
     for c in range(1, ws.max_column + 1):
         v = ws.cell(row=FILA_ENCABEZADO, column=c).value
@@ -491,6 +529,8 @@ def mapear_columnas(ws):
             dotacion.append((c, str(v).strip()))
         elif nombre == COLUMNA_VALIDACION:
             validacion = c
+        elif nombre in COLUMNAS_VISTO:
+            vistos.setdefault(nombre, c)
     faltan = {'id', 'base', 'servicio', 'funcion', 'dia'} - set(cols)
     if faltan:
         sys.exit(f"En la hoja {ws.title!r} no encuentro las columnas: "
@@ -499,7 +539,7 @@ def mapear_columnas(ws):
         sys.exit(f"En la hoja {ws.title!r} no encuentro la columna "
                  f"{COLUMNA_VALIDACION!r}, que es la que marca los servicios "
                  f"validados.")
-    return cols, dotacion, validacion
+    return cols, dotacion, validacion, vistos
 
 
 def leer_servicios(xlsx, finde):
@@ -508,7 +548,7 @@ def leer_servicios(xlsx, finde):
     if hoja not in wb.sheetnames:
         sys.exit(f"La hoja {hoja!r} no existe en {xlsx}")
     ws = wb[hoja]
-    COLS, dotacion_cols, col_val = mapear_columnas(ws)
+    COLS, dotacion_cols, col_val, vistos = mapear_columnas(ws)
 
     esperadas = len([c for c in (CAMPOS_FINDE if finde else CAMPOS_SEMANA)
                      if c[0].startswith('ag_')])
@@ -519,14 +559,28 @@ def leer_servicios(xlsx, finde):
               f"Revisar CAMPOS_{'FINDE' if finde else 'SEMANA'}.")
 
     filas, sin_base, cargados = [], [], 0
+    sin_id, recalculados = [], []
     for r in range(7, ws.max_row + 1):
+        g = lambda k: ws.cell(row=r, column=COLS[k]).value if k in COLS else None
         idv = limpiar(ws.cell(row=r, column=COLS['id']).value)
         if not idv:
+            # Una fila sin ID pero con datos cargados no es una fila vacia:
+            # es una fila a la que alguien le borro el ID. Antes se descartaba
+            # en silencio.
+            if any(limpiar(g(k)) for k in ('servicio', 'base', 'funcion')):
+                sin_id.append((r, limpiar(g('servicio'))[:44]))
             continue
         cargados += 1
-        if ws.cell(row=r, column=col_val).value is not True:
+
+        estado = es_verdadero(ws.cell(row=r, column=col_val).value)
+        if estado is None:
+            # La celda no dice nada confiable: se recalcula con los vistos
+            # en vez de perder el servicio.
+            estado = validado_por_vistos(ws, r, vistos)
+            if estado is not None:
+                recalculados.append((r, idv, estado))
+        if not estado:
             continue          # todavia no validado
-        g = lambda k: ws.cell(row=r, column=COLS[k]).value if k in COLS else None
 
         dot = []
         for c, _ in dotacion_cols:
@@ -579,7 +633,47 @@ def leer_servicios(xlsx, finde):
     validados = len(filas) + len(sin_base)
     print(f"  Hoja {hoja}: {cargados} servicios cargados, {validados} "
           f"validados ({COLUMNA_VALIDACION} tildado)")
+
+    if sin_id:
+        print(f"  !! {len(sin_id)} fila(s) con datos pero SIN ID en la hoja "
+              f"{hoja}. No entran a la orden:")
+        for r, s in sin_id[:10]:
+            print(f"     fila {r}: {s}")
+    if recalculados:
+        entraron = sum(1 for _, _, e in recalculados if e)
+        print(f"  !! En {len(recalculados)} fila(s) la celda "
+              f"{COLUMNA_VALIDACION} no traia un valor legible; se recalculo "
+              f"con los vistos ({entraron} entraron a la orden):")
+        for r, i, e in recalculados[:10]:
+            print(f"     fila {r}: {i} -> {'VALIDADO' if e else 'no validado'}")
+
+    revisar_formulas(xlsx, hoja, col_val)
     return filas, sin_base
+
+
+def revisar_formulas(xlsx, hoja, col_val):
+    """Avisa que celdas de AÑADIDO perdieron la formula y quedaron con un
+    valor escrito a mano: ahi los vistos dejan de mandar."""
+    try:
+        ws = openpyxl.load_workbook(xlsx, data_only=False)[hoja]
+    except Exception:
+        return
+    a_mano = []
+    for r in range(7, ws.max_row + 1):
+        if not str(ws.cell(row=r, column=1).value or '').strip():
+            continue
+        v = ws.cell(row=r, column=col_val).value
+        if v is None:
+            continue
+        if not (isinstance(v, str) and v.startswith('=')) and \
+                not hasattr(v, 'text'):
+            a_mano.append(r)
+    if a_mano:
+        print(f"  .. {len(a_mano)} celda(s) de {COLUMNA_VALIDACION} en {hoja} "
+              f"tienen un valor escrito a mano en vez de la formula.")
+        print(f"     Ahi los vistos de CGM/PLANI/GO/DG ya no deciden nada. "
+              f"Filas: {', '.join(str(r) for r in a_mano[:25])}"
+              f"{' ...' if len(a_mano) > 25 else ''}")
 
 
 # ==========================================================================
