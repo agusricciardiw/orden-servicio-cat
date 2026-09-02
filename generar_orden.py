@@ -72,6 +72,13 @@ ANCHO_INDICE = 7200
 # No incluir los anexos que quedaron sin ningun servicio validado.
 OMITIR_ANEXOS_VACIOS = True
 
+# Los servicios validados que no tienen BASE cargada no pertenecen a ningun
+# anexo. En vez de dejarlos afuera en silencio -- asi se perdieron 15 puestos
+# de alcoholemia del sabado en la orden del 29/08 -- van a un anexo propio,
+# visible en el indice. Se completa la base en la planilla y desaparece solo.
+ANEXO_SIN_BASE = True
+TITULO_SIN_BASE = 'SERVICIOS SIN BASE ASIGNADA'
+
 # Las comunas no trabajan los fines de semana: la orden de finde lleva solo
 # bases operativas. Si aparece un servicio de finde con base de despliegue
 # comunal, el generador avisa, porque es un error de carga.
@@ -1299,9 +1306,10 @@ def ordenar(regs, orden_bases=None):
     return sorted(regs, key=k)
 
 
-def agrupar(servicios, ambito, solo=None):
+def agrupar(servicios, ambito, solo=None, sin_base=()):
     """Devuelve los anexos en el orden en que van al documento: primero las
-    bases operativas, despues las zonas comunales."""
+    bases operativas, despues las zonas comunales, y al final -- si hay -- el
+    anexo de servicios sin base asignada."""
     grupos = []
 
     def coincide(titulo):
@@ -1336,6 +1344,14 @@ def agrupar(servicios, ambito, solo=None):
     if OMITIR_ANEXOS_VACIOS and any(g['regs'] for g in grupos):
         grupos = [g for g in grupos if g['regs']]
 
+    # Un servicio validado no puede desaparecer de la orden. Los que no tienen
+    # base cargada no pertenecen a ningun anexo, asi que van a uno propio:
+    # quedan a la vista en el indice y en el documento, y el que lo lee se da
+    # cuenta de que hay que completarles la base en la planilla.
+    if ANEXO_SIN_BASE and sin_base and coincide(TITULO_SIN_BASE):
+        grupos.append(dict(familia=None, titulo=TITULO_SIN_BASE, detalle='',
+                           regs=ordenar(list(sin_base))))
+
     for i, g in enumerate(grupos, 1):
         g['marcador'] = f'anexo{i}'
     return grupos
@@ -1356,7 +1372,7 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
             for s in en_comuna[:10]:
                 print(f"     fila {s['fila']}: {s['id']} - {s['base_cruda']}")
 
-    grupos = agrupar(servicios, ambito, solo)
+    grupos = agrupar(servicios, ambito, solo, sin_base)
     if not grupos:
         sys.exit(f"No hay ningun anexo que coincida con {solo!r}")
 
@@ -1450,7 +1466,11 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
     largas = sorted([s for s in incluidos if s['largo_desc'] > 400],
                     key=lambda s: -s['largo_desc'])
     if sin_base:
-        print(f"\n  !! {len(sin_base)} servicio(s) SIN BASE, afuera del documento:")
+        destino = (f"van al anexo '{TITULO_SIN_BASE}'" if ANEXO_SIN_BASE
+                   else "quedan AFUERA del documento")
+        print(f"\n  !! {len(sin_base)} servicio(s) validado(s) SIN BASE; "
+              f"{destino}.\n     Completar la base en la planilla y vuelven "
+              f"a su anexo solos:")
         for s in sin_base:
             print(f"     fila {s['fila']}: {s['id']}")
     if sin_turno:

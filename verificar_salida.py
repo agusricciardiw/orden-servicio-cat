@@ -75,8 +75,9 @@ def leer_planilla(xlsx, hoja):
             continue
         base = str(ws.cell(row=r, column=cols['BASE']).value or '').strip()
         if not base or base == '0':
+            # Ya no quedan afuera: van al anexo de servicios sin base, asi que
+            # tienen que estar en el documento igual que los demas.
             sin_base += 1
-            continue
         servicios.append(clave(ws.cell(row=r, column=cols['FUNCION']).value,
                                ws.cell(row=r, column=cols['SERVICIO']).value))
         for c in dot:
@@ -141,10 +142,10 @@ def comparar(nombre, hoja, docx, xlsx):
     obt, ag_obt, anexos, anclas, marcas, indice = leer_documento(docx)
 
     ok = True
-    print(f"  servicios validados con base  : {len(esp)}")
+    print(f"  servicios validados           : {len(esp)}")
     print(f"  servicios en el documento     : {len(obt)}")
     if sin_base:
-        print(f"  (mas {sin_base} validado/s SIN BASE, que no entran a ningun anexo)")
+        print(f"  (de esos, {sin_base} sin base: van al anexo aparte)")
 
     ce, co = Counter(esp), Counter(obt)
     faltan = ce - co

@@ -20,6 +20,15 @@ generador avisa porque es un error de carga.
 Los anexos que quedan sin ningún servicio validado no se generan ni aparecen en
 el índice.
 
+**Ningún servicio validado se pierde.** Los que no tienen `BASE` cargada no
+pertenecen a ningún anexo, así que van a uno propio —`SERVICIOS SIN BASE
+ASIGNADA`— que aparece en el índice como cualquier otro. Completando la base en
+la planilla vuelven solos a su anexo y ese anexo desaparece.
+
+> Esto no es teórico: en la orden del 29/08 se perdieron **15 puestos de
+> alcoholemia del sábado** justamente por tener la base vacía, y la única
+> señal era una línea en la consola que nadie mira.
+
 ---
 
 ## Uso semanal (3 pasos)
