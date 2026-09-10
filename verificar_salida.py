@@ -10,7 +10,8 @@ coinciden, lo que se manda es lo que se cargo y valido.
     python verificar_salida.py --xlsx "ruta\\al\\archivo.xlsx"
 
 Chequea:
-  1. Que cada servicio validado aparezca en el documento, y solo una vez
+  1. Que cada servicio validado aparezca en el documento: una vez, o una vez
+     por cada subtabla de turno que abarca si la orden va por turnos
   2. Que no haya servicios de mas
   3. Que la suma de agentes por turno coincida
   4. Que el indice liste los mismos anexos que trae el documento
@@ -50,7 +51,7 @@ def clave(funcion, servicio):
 
 
 # ---------------------------------------------------------------- el Excel
-def leer_planilla(xlsx, hoja):
+def leer_planilla(xlsx, hoja, subtablas):
     ws = openpyxl.load_workbook(xlsx, data_only=True)[hoja]
     cols, dot, val = {}, [], None
     for c in range(1, ws.max_column + 1):
@@ -58,31 +59,49 @@ def leer_planilla(xlsx, hoja):
         if v is None:
             continue
         n = norm(v)
-        if n in ('ID', 'SERVICIO', 'BASE', 'FUNCION'):
+        if n in ('ID', 'SERVICIO', 'BASE', 'FUNCION', 'TURNO'):
             cols.setdefault(n, c)
         elif n.startswith('AT '):
-            dot.append(c)
+            dot.append((c, n[3:].split()[0]))      # (columna, turno)
         elif n == 'ANADIDO':
             val = c
     if val is None or not cols.get('ID'):
         sys.exit(f"No pude ubicar las columnas en la hoja {hoja}")
+    turnos_hoja = list(dict.fromkeys(t for _, t in dot))
+
+    def numero(v):
+        return int(v) if isinstance(v, (int, float)) else 0
 
     servicios, agentes, sin_base = [], 0, 0
     for r in range(7, ws.max_row + 1):
         if not str(ws.cell(row=r, column=cols['ID']).value or '').strip():
             continue
-        if ws.cell(row=r, column=val).value is not True:
+        v = ws.cell(row=r, column=val).value
+        if not (v is True or norm(v) in ('VERDADERO', 'TRUE')):
             continue
         base = str(ws.cell(row=r, column=cols['BASE']).value or '').strip()
         if not base or base == '0':
             # Ya no quedan afuera: van al anexo de servicios sin base, asi que
             # tienen que estar en el documento igual que los demas.
             sin_base += 1
-        servicios.append(clave(ws.cell(row=r, column=cols['FUNCION']).value,
-                               ws.cell(row=r, column=cols['SERVICIO']).value))
-        for c in dot:
-            v = ws.cell(row=r, column=c).value
-            agentes += int(v) if isinstance(v, (int, float)) else 0
+
+        # Cuantas veces tiene que aparecer: una por cada subtabla de turno.
+        # La regla esta escrita aca de nuevo, a proposito, sin importar la
+        # del generador: si las dos implementaciones dan lo mismo, esta bien.
+        turnos = [t for t in turnos_hoja
+                  if sum(numero(ws.cell(row=r, column=c).value)
+                         for c, tt in dot if tt == t) > 0]
+        if not turnos and 'TURNO' in cols:
+            palabras = set(re.split(r'[^A-Z]+',
+                                    norm(ws.cell(row=r, column=cols['TURNO']).value)))
+            turnos = [t for t in turnos_hoja if t in palabras]
+        copias = max(len(turnos), 1) if subtablas else 1
+
+        huella = clave(ws.cell(row=r, column=cols['FUNCION']).value,
+                       ws.cell(row=r, column=cols['SERVICIO']).value)
+        servicios.extend([huella] * copias)
+        for c, _ in dot:
+            agentes += numero(ws.cell(row=r, column=c).value)
     return servicios, agentes, sin_base
 
 
@@ -91,11 +110,14 @@ def leer_documento(ruta):
     doc = Document(ruta)
     servicios, agentes = [], 0
     anexos = []
+    hay_turnos = False
     for t in doc.tables:
         filas = t.rows
         if len(filas) < 3:
             continue
         titulo = filas[0].cells[0].text.strip()
+        con_turno = '·' in titulo
+        titulo = titulo.split('·')[0].strip()
         cab = [norm(c.text) for c in filas[1].cells]
         if 'DIA' not in cab:                       # no es tabla de anexo
             continue
@@ -109,8 +131,12 @@ def leer_documento(ruta):
             print(f"  !! No pude ubicar las columnas en el anexo {titulo!r}")
             continue
 
+        hay_turnos = hay_turnos or con_turno
         anexos.append(titulo)
-        for fila in filas[3:]:
+        for fila in filas:
+            pr = fila._tr.trPr
+            if pr is not None and pr.find(W + 'tblHeader') is not None:
+                continue                      # titulo o encabezado
             celdas = [c.text for c in fila.cells]
             if len(celdas) <= i_base:
                 continue
@@ -127,7 +153,8 @@ def leer_documento(ruta):
     indice = [c.text.split('\n')[0].strip()
               for t in doc.tables[:1] for fila in t.rows for c in fila.cells
               if c.text.strip().upper().startswith('ANEXO ')]
-    return servicios, agentes, anexos, anclas, marcas, indice
+    anexos = list(dict.fromkeys(anexos))    # varias subtablas, un anexo
+    return servicios, agentes, anexos, anclas, marcas, indice, hay_turnos
 
 
 def comparar(nombre, hoja, docx, xlsx):
@@ -138,12 +165,17 @@ def comparar(nombre, hoja, docx, xlsx):
         print("  !! NO EXISTE el documento generado")
         return False
 
-    esp, ag_esp, sin_base = leer_planilla(xlsx, hoja)
-    obt, ag_obt, anexos, anclas, marcas, indice = leer_documento(docx)
+    (obt, ag_obt, anexos, anclas, marcas, indice,
+     hay_turnos) = leer_documento(docx)
+    esp, ag_esp, sin_base = leer_planilla(xlsx, hoja, hay_turnos)
 
     ok = True
-    print(f"  servicios validados           : {len(esp)}")
-    print(f"  servicios en el documento     : {len(obt)}")
+    if hay_turnos:
+        print(f"  filas esperadas (servicio x turno): {len(esp)}")
+        print(f"  filas en el documento             : {len(obt)}")
+    else:
+        print(f"  servicios validados           : {len(esp)}")
+        print(f"  servicios en el documento     : {len(obt)}")
     if sin_base:
         print(f"  (de esos, {sin_base} sin base: van al anexo aparte)")
 
@@ -161,7 +193,8 @@ def comparar(nombre, hoja, docx, xlsx):
         for (s, f), n in list(sobran.items())[:12]:
             print(f"     x{n}  {s[:34]} | {f[:44]}")
     if not faltan and not sobran:
-        print("  OK  cada servicio validado aparece una sola vez")
+        print("  OK  cada servicio aparece exactamente donde corresponde"
+              + (" (una vez por turno)" if hay_turnos else ""))
 
     print(f"\n  agentes sumados en la planilla: {ag_esp}")
     print(f"  agentes sumados en el documento: {ag_obt}")
@@ -199,12 +232,20 @@ def main():
     if a.xlsx:
         xlsx = Path(a.xlsx)
     else:
-        cand = sorted((Path.home() / 'Downloads').glob('SISTEMA DE PREORDEN*.xlsx'),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-        if not cand:
-            sys.exit("No encuentro la planilla en Descargas")
-        xlsx = cand[0]
-    print(f"\nPlanilla: {xlsx.name}\n")
+        # Mismo orden de busqueda que el generador: primero la carpeta
+        # planilla del proyecto, despues Descargas. Si buscaran en lugares
+        # distintos podrian comparar contra archivos distintos sin avisar.
+        xlsx = None
+        for carpeta in (AQUI / 'planilla', Path.home() / 'Downloads'):
+            cand = sorted((c for c in carpeta.glob('SISTEMA DE PREORDEN*.xlsx')
+                           if not c.name.startswith('~$')),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            if cand:
+                xlsx = cand[0]
+                break
+        if xlsx is None:
+            sys.exit("No encuentro la planilla ni en 'planilla' ni en Descargas")
+    print(f"\nPlanilla: {xlsx}\n")
 
     todo_ok = True
     for nombre, hoja, docx in ORDENES:

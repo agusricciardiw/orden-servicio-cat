@@ -118,6 +118,7 @@ Detalles:
 | `python generar_orden.py --vertical` | Anexos verticales en vez de apaisados |
 | `python generar_orden.py --xlsx "C:\ruta\otro.xlsx"` | Otra planilla |
 | `python generar_orden.py --tam 10` | Letra más grande (por defecto 9pt) |
+| `python generar_orden.py --sin-subtablas` | Anexo corrido, sin partir por turno |
 | `python generar_orden.py --max-desc 250` | Recorte distinto de DESCRIPCIÓN (`0` = sin recorte) |
 
 ---
@@ -133,7 +134,7 @@ Detalles:
 | OBSERVACIONES | `OBSERVACIONES` |
 | DIRECCIÓN | `UBICACION` + `ALTURA` / `CALLE 2` / `CALLE 3` |
 | HORA | `HORA`, tal como se cargó (ver abajo) |
-| AGENTES POR TURNO | `AT TM` / `AT TT` / `AT TIN` / `AT TN` en una columna cada uno |
+| AGENTES | Los del turno de la subtabla. En el finde, uno por día (`SÁB`, `DOM`) |
 | BASE | `BASE`, abreviada (ver abajo) |
 
 ### La columna HORA
@@ -175,21 +176,52 @@ nombre completo, así que agregar una base nueva no rompe nada. `ABREVIAR_BASES
 
 En el finde las columnas de dotación son `FSD S`, `FSD D`, `FSI S`, `FSI D` y `FSN D`.
 
-### Orden de los servicios
+### Cada anexo va partido por turno
 
-Dentro de cada anexo van agrupados **por base**, y dentro de cada base:
+Adentro de cada anexo hay **una subtabla por turno** —mañana, tarde,
+intermedio, noche; en el finde FSD, FSI y FSN— para que cada coordinador lea
+solo la suya. El título del turno se repite arriba de cada página, así que en
+cualquier hoja se sabe qué turno se está leyendo.
+
+**Un servicio que abarca varios turnos aparece en cada subtabla que le toca**,
+y en cada una con la dotación de *ese* turno: un `TM-TT` con 2 agentes a la
+mañana y 4 a la tarde sale con 2 en la de mañana y 4 en la de tarde. Por eso la
+suma de una subtabla es la dotación real del turno, y la suma de todas da lo
+mismo que la planilla. La columna TURNO sigue mostrando `TM-TT`, para que el
+coordinador sepa que ese servicio tiene relevo.
+
+En qué subtablas entra cada servicio:
+
+1. **Donde tenga agentes cargados** — la dotación manda
+2. Si no tiene ningún agente, en los turnos que nombre la columna TURNO, con el
+   contador vacío
+3. Si no tiene ni una cosa ni la otra, en **SIN TURNO ASIGNADO**
+
+Si la columna TURNO y la dotación no coinciden, manda la dotación y el
+generador lo avisa con número de fila. Ojo con ese aviso: si TURNO dice `TM-TT`
+pero sólo se cargaron agentes en TM, el servicio **no aparece en la subtabla de
+tarde**.
+
+En el finde la dotación está por turno y por día, pero el coordinador es el
+mismo el sábado y el domingo: va una sola subtabla por turno, con una columna
+de agentes para cada día (**SÁB** y **DOM**).
+
+Los turnos salen de las columnas `AT ...` de la planilla, no de una lista fija:
+si mañana se agrega un turno, aparece su subtabla sola. Los nombres que se
+muestran se cambian en `NOMBRES_TURNO`.
+
+**Cuesta páginas:** en la orden del 31/08 la semanal pasa de 101 a 128 y la de
+finde de 21 a 29. Para volver al anexo corrido: `--sin-subtablas`.
+
+### Orden adentro de cada subtabla
 
 1. Primero los que **cubren la semana completa** (lunes a viernes)
 2. Después los de días puntuales, **empezando por los lunes**
 3. A igual día de arranque, primero el que cubre más días
-   (`LUN-MAR-JUE-VIE` antes que `LUN-MIE`)
-4. A igualdad de todo lo anterior, por turno y por horario
+4. A igualdad de todo lo anterior, por horario
 
-En los anexos de zona comunal la secuencia de días **se reinicia en cada
-comuna**, porque cada una es un bloque aparte: el agente de la BDC 1 encuentra
-todo lo suyo junto.
-
-Se cambia con `ORDEN_SERVICIOS`.
+En los anexos de zona comunal, adentro de cada turno los servicios siguen
+agrupados por comuna, así el agente de la BDC 1 encuentra todo lo suyo junto.
 
 Zonas comunales: **CENTRO** 1-3-4-5-6 · **NORTE** 2-12-13-14-15 · **SUR** 7-8-9-10-11
 

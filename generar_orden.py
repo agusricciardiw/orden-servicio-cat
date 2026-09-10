@@ -106,6 +106,35 @@ ORDEN_TURNO = {
     'FSN D': 4, 'FSN': 4,
 }
 
+# --------------------------------------------------------------------------
+# SUBTABLAS POR TURNO
+# Cada anexo se parte en una subtabla por turno (TM, TT, TIN, TN; en el finde
+# FSD, FSI, FSN), para que cada coordinador lea solo la suya. Un servicio que
+# abarca varios turnos aparece en cada subtabla que le corresponde, y en cada
+# una con la dotacion de ESE turno: sumando una subtabla sale la dotacion real
+# del turno.
+#
+# En que subtablas entra un servicio:
+#   1. Donde tenga agentes cargados (la dotacion manda)
+#   2. Si no tiene ningun agente, en los turnos que nombre la columna TURNO
+#   3. Si no tiene ni una cosa ni la otra, en SIN TURNO ASIGNADO
+# Si TURNO y la dotacion no coinciden, manda la dotacion y se avisa.
+# --------------------------------------------------------------------------
+SUBTABLAS_POR_TURNO = True
+
+NOMBRES_TURNO = {
+    'TM': 'TURNO MAÑANA',
+    'TT': 'TURNO TARDE',
+    'TIN': 'TURNO INTERMEDIO',
+    'TN': 'TURNO NOCHE',
+}
+SIN_TURNO = 'SIN TURNO ASIGNADO'
+
+# Titulo de cada columna de agentes en el finde, segun el sufijo de la
+# columna de la planilla (AT FSD S -> S). El coordinador es el mismo los dos
+# dias, asi que va una sola subtabla por turno con una columna por dia.
+NOMBRE_DIA = {'S': 'SÁB', 'D': 'DOM'}
+
 # Que comunas integra cada zona (sale del indice de anexos del documento real)
 ZONAS = OrderedDict([
     ('CENTRO', [1, 3, 4, 5, 6]),
@@ -549,6 +578,23 @@ def mapear_columnas(ws):
     return cols, dotacion, validacion, vistos
 
 
+def estructura_turnos(dotacion_cols):
+    """Arma, a partir de los encabezados de dotacion, que turnos hay y que
+    columnas le corresponden a cada uno:
+        'AT TM', 'AT TT', ...          -> {'TM': [(0, '')], 'TT': [(1, '')], ...}
+        'AT FSD S', 'AT FSD D', ...    -> {'FSD': [(0, 'S'), (1, 'D')], ...}
+    Sale de la planilla y no de una lista fija: si mañana agregan un turno,
+    aparece su subtabla sola."""
+    est = OrderedDict()
+    for i, (_, nombre) in enumerate(dotacion_cols):
+        partes = nombre.upper()[len(PREFIJO_DOTACION):].split()
+        if not partes:
+            continue
+        est.setdefault(partes[0], []).append(
+            (i, partes[1] if len(partes) > 1 else ''))
+    return est
+
+
 def leer_servicios(xlsx, finde):
     hoja = HOJA_CARGA[bool(finde)]
     wb = openpyxl.load_workbook(xlsx, data_only=True)
@@ -556,6 +602,7 @@ def leer_servicios(xlsx, finde):
         sys.exit(f"La hoja {hoja!r} no existe en {xlsx}")
     ws = wb[hoja]
     COLS, dotacion_cols, col_val, vistos = mapear_columnas(ws)
+    est = estructura_turnos(dotacion_cols)
 
     esperadas = len([c for c in (CAMPOS_FINDE if finde else CAMPOS_SEMANA)
                      if c[0].startswith('ag_')])
@@ -632,6 +679,18 @@ def leer_servicios(xlsx, finde):
         )
         for i, v in enumerate(dot):
             reg[f'ag_{i}'] = str(v) if v else ''
+
+        # En que turnos va el servicio. Manda la dotacion; la columna TURNO
+        # solo decide cuando no hay ningun agente cargado.
+        por_dotacion = [t for t, cs in est.items()
+                        if sum(dot[i] for i, _ in cs) > 0]
+        palabras = set(re.split(r'[^A-Z]+', limpiar(g('turno')).upper()))
+        por_texto = [t for t in est if t in palabras]
+        reg['turnos'] = por_dotacion or por_texto
+        reg['turnos_texto'] = por_texto
+        reg['turnos_dotacion'] = por_dotacion
+        reg['ag_turno'] = {t: {dia: dot[i] for i, dia in cs}
+                           for t, cs in est.items()}
         if not base_cruda:
             sin_base.append(reg)
             continue
@@ -655,7 +714,7 @@ def leer_servicios(xlsx, finde):
             print(f"     fila {r}: {i} -> {'VALIDADO' if e else 'no validado'}")
 
     revisar_formulas(xlsx, hoja, col_val)
-    return filas, sin_base
+    return filas, sin_base, est
 
 
 def revisar_formulas(xlsx, hoja, col_val):
@@ -786,6 +845,18 @@ def fila(celdas, alto=None, encabezado_repetible=False, entera=False):
     return tr
 
 
+def pegada_a_la_siguiente(tr):
+    """Marca una fila para que Word no la deje sola al pie de la hoja: se
+    queda en la misma pagina que la fila que sigue. Aplicado a los
+    encabezados, una subtabla nunca arranca con el titulo solo y los datos
+    en la pagina siguiente. keepNext va primero porque el esquema de Word
+    exige ese orden dentro de pPr."""
+    for ppr in tr.iter(W + 'pPr'):
+        if ppr.find(W + 'keepNext') is None:
+            ppr.insert(0, el('w:keepNext'))
+    return tr
+
+
 def anchos(campos, orientacion):
     """Devuelve los anchos escalados para que sumen el ancho de la tabla."""
     idx = 2 if orientacion == 'vertical' else 3
@@ -827,6 +898,7 @@ def tabla_anexo(titulo, registros, campos, orientacion):
                            color=P['titulo_texto'], gridspan=len(campos),
                            bordes_=B_TIT, margen_lat=40)],
                     alto=340, encabezado_repetible=REPETIR_TITULO))
+    pegada_a_la_siguiente(tbl[-1])
 
     # Filas 2 y 3: encabezados. Las columnas agrupadas (dotacion por turno)
     # quedan bajo un encabezado combinado; el resto se fusiona verticalmente.
@@ -855,13 +927,16 @@ def tabla_anexo(titulo, registros, campos, orientacion):
                 f_b.append(celda('', ws[i], P['encabezado_fondo'],
                                  vmerge='continue', bordes_=B_ENC))
                 i += 1
-        tbl.append(fila(f_a, encabezado_repetible=REPETIR_ENCABEZADO))
-        tbl.append(fila(f_b, encabezado_repetible=REPETIR_ENCABEZADO))
+        tbl.append(pegada_a_la_siguiente(
+            fila(f_a, encabezado_repetible=REPETIR_ENCABEZADO)))
+        tbl.append(pegada_a_la_siguiente(
+            fila(f_b, encabezado_repetible=REPETIR_ENCABEZADO)))
     else:
         tbl.append(fila([celda(c[1], w, P['encabezado_fondo'], negrita=True,
                                color=P['encabezado_texto'], bordes_=B_ENC)
                          for c, w in zip(campos, ws)],
                         encabezado_repetible=REPETIR_ENCABEZADO))
+        pegada_a_la_siguiente(tbl[-1])
 
     # Datos
     zebra = P['zebra'] if (USAR_ZEBRA and P['zebra']) else None
@@ -877,6 +952,56 @@ def tabla_anexo(titulo, registros, campos, orientacion):
                                 bordes_=(P['borde'],) * 4))
         tbl.append(fila(celdas, entera=FILA_ENTERA))
     return tbl
+
+
+def campos_subtabla(dias, finde):
+    """Columnas de una subtabla de turno: las mismas del anexo, pero en vez
+    de una columna de agentes por turno lleva solo la del turno en cuestion
+    (una en la semana; una por dia en el finde). El ancho que se libera se
+    reparte solo entre las demas columnas."""
+    base = CAMPOS_FINDE if finde else CAMPOS_SEMANA
+    pos = next(i for i, c in enumerate(base) if c[0].startswith('ag_'))
+    resto = [c for c in base if not c[0].startswith('ag_')]
+    if dias == ['']:
+        agentes = [('agt_', 'AGENTES', 900, 1050, None)]
+    else:
+        agentes = [(f'agt_{d}', NOMBRE_DIA.get(d, d), 480, 560, 'AGENTES')
+                   for d in dias]
+    return resto[:pos] + agentes + resto[pos:]
+
+
+def subtablas(regs, est, finde):
+    """Parte los servicios de un anexo en una subtabla por turno.
+
+    Un servicio que abarca varios turnos va a cada subtabla que le toca, y en
+    cada una con la dotacion de ESE turno: un TM-TT con 2 a la mañana y 4 a
+    la tarde sale con 2 en la de mañana y 4 en la de tarde. Asi la suma de la
+    subtabla es la dotacion real del turno, y la suma de todas las subtablas
+    da lo mismo que la planilla.
+
+    Respeta el orden en que vienen los servicios, que ya estan ordenados por
+    base y dia. Devuelve (turno, titulo, servicios, columnas) por subtabla."""
+    cubetas = OrderedDict((t, []) for t in est)
+    cubetas[SIN_TURNO] = []
+    for reg in regs:
+        for t in (reg['turnos'] or [SIN_TURNO]):
+            copia = dict(reg)
+            copia['turno'] = '-'.join(reg['turnos'])
+            if t in est:
+                for dia, n in reg['ag_turno'][t].items():
+                    copia[f'agt_{dia}'] = str(n) if n else ''
+            cubetas[t].append(copia)
+
+    for t, lista in cubetas.items():
+        if not lista:
+            continue
+        if t == SIN_TURNO:
+            dias, titulo = [''], SIN_TURNO
+        else:
+            dias = [d for _, d in est[t]]
+            titulo = (f"{NOMBRES_TURNO[t]} ({t})" if t in NOMBRES_TURNO
+                      else f"TURNO {t}")
+        yield t, titulo, lista, campos_subtabla(dias, finde)
 
 
 def tabla_indice(grupos):
@@ -1360,7 +1485,7 @@ def agrupar(servicios, ambito, solo=None, sin_base=()):
 def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
     hoja = HOJA_CARGA[bool(finde)]
     campos = CAMPOS_FINDE if finde else CAMPOS_SEMANA
-    servicios, sin_base = leer_servicios(xlsx, finde)
+    servicios, sin_base, est = leer_servicios(xlsx, finde)
 
     en_comuna = [s for s in servicios if s['comuna'] is not None]
     if finde and FINDE_SOLO_BASES:
@@ -1422,6 +1547,13 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
 
         if g.get('imagenes'):
             copiados, salteados = anexar_documento(doc, g['imagenes'], marca)
+        elif g['regs'] and SUBTABLAS_POR_TURNO:
+            for _, nombre, lista, campos_sub in subtablas(g['regs'], est,
+                                                          finde):
+                marca.addprevious(tabla_anexo(
+                    f"{g['titulo']}  ·  {nombre}", lista, campos_sub,
+                    orientacion))
+                marca.addprevious(parrafo(tam=12))
         elif g['regs']:
             marca.addprevious(tabla_anexo(g['titulo'], g['regs'], campos,
                                           orientacion))
@@ -1455,12 +1587,37 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
             continue
         print(f"     {g['titulo']:32s} {len(g['regs']):4d} servicios")
         total += len(g['regs'])
+        if SUBTABLAS_POR_TURNO and g['regs']:
+            partes = [f"{t} {len(l)}" for t, _, l, _ in
+                      subtablas(g['regs'], est, finde)]
+            print(f"        {'  ·  '.join(partes)}")
     print(f"  {'TOTAL':37s} {total:4d}")
     if INCLUIR_ANEXO_IMAGENES and not imagenes and not solo:
         falta = ANEXO_IMAGENES_FINDE if finde else ANEXO_IMAGENES_SEMANA
         print(f"  (sin anexo de imagenes: no existe {falta.name})")
 
     incluidos = [s for g in grupos for s in g['regs']]
+
+    # TURNO y dotacion no coinciden: manda la dotacion, pero hay que avisar
+    # porque es un error de carga y puede estar mal cualquiera de los dos.
+    discrep = [s for s in incluidos
+               if s.get('turnos_texto') and s.get('turnos_dotacion')
+               and set(s['turnos_texto']) != set(s['turnos_dotacion'])]
+    if SUBTABLAS_POR_TURNO and discrep:
+        print(f"\n  !! {len(discrep)} servicio(s) donde la columna TURNO no "
+              f"coincide con la dotacion cargada.\n"
+              f"     Van a las subtablas que indica la dotacion; revisar "
+              f"cual de las dos esta bien:")
+        for s in discrep[:15]:
+            print(f"     fila {s['fila']:>4}: {s['id']:<9} TURNO dice "
+                  f"{'-'.join(s['turnos_texto']):<12} agentes en "
+                  f"{'-'.join(s['turnos_dotacion'])}")
+    sin_subtabla = [s for s in incluidos if not s.get('turnos')]
+    if SUBTABLAS_POR_TURNO and sin_subtabla:
+        print(f"  !! {len(sin_subtabla)} servicio(s) sin turno ni dotacion; "
+              f"van a la subtabla {SIN_TURNO!r}:")
+        for s in sin_subtabla[:10]:
+            print(f"     fila {s['fila']:>4}: {s['id']}")
     sin_ag = [s for s in incluidos if not s['total_ag']]
     sin_turno = [s for s in incluidos if not s['turno']]
     largas = sorted([s for s in incluidos if s['largo_desc'] > 400],
@@ -1543,6 +1700,8 @@ def main():
                     help='generar SOLO la orden de fin de semana')
     ap.add_argument('--semana', action='store_true',
                     help='generar SOLO la orden semanal')
+    ap.add_argument('--sin-subtablas', action='store_true',
+                    help='un anexo corrido, sin partir por turno')
     ap.add_argument('--vertical', action='store_true',
                     help='forzar anexos verticales')
     ap.add_argument('--zona', default=None,
@@ -1558,6 +1717,8 @@ def main():
 
     if a.paleta:
         globals()['PALETA'] = a.paleta
+    if a.sin_subtablas:
+        globals()['SUBTABLAS_POR_TURNO'] = False
     if a.max_desc is not None:
         globals()['MAX_DESCRIPCION'] = a.max_desc or None
     if a.tam:
