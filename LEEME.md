@@ -9,8 +9,20 @@ el Word final con todos los anexos.
    Vedia, Cinthia Choque)
 2. Un anexo por cada **zona comunal** (Centro, Norte, Sur)
 
-El índice se arma solo con todos los anexos y **cada renglón es clickeable**:
-salta directo al anexo, tanto en el Word como en el PDF.
+El índice se arma solo con todos los anexos y **es clickeable**, tanto en el
+Word como en el PDF. Debajo de cada anexo aparecen sus turnos:
+
+```
+ANEXO BASE COCHABAMBA
+122 servicios
+TM (30)  ·  TT (26)  ·  TN (91)
+```
+
+El título lleva al principio del anexo; cada turno, **directo a su subtabla**.
+El número entre paréntesis son las filas de ese turno: la suma puede dar más
+que los servicios del anexo, porque los que abarcan varios turnos aparecen en
+cada uno. Con `INDICE_TURNOS = False` el índice vuelve a mostrar solo los
+anexos.
 
 **La orden de fin de semana va aparte** (`--finde`), con su propia plantilla y
 **solo con bases operativas**: las comunas no trabajan los fines de semana. Si

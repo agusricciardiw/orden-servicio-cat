@@ -67,6 +67,12 @@ ORDEN_FAMILIAS = ['BASES OPERATIVAS', 'ZONAS COMUNALES']
 
 # Indice de anexos clickeable (cada renglon salta al anexo)
 INDICE_CLICKEABLE = True
+
+# Debajo de cada anexo del indice, un link por turno que lleva directo a su
+# subtabla: "TM (30) · TT (26) · TN (91)". El numero es la cantidad de filas
+# de esa subtabla; la suma puede dar mas que los servicios del anexo porque
+# los servicios compartidos entre turnos aparecen en cada uno.
+INDICE_TURNOS = True
 ANCHO_INDICE = 7200
 
 # No incluir los anexos que quedaron sin ningun servicio validado.
@@ -791,14 +797,14 @@ def celda(texto, ancho, fill, *, negrita=False, color=None, gridspan=None,
     p_pr.append(el('w:jc', **{'w:val': alineacion}))
     p.append(p_pr)
 
-    # Si la celda es un link, las corridas van adentro del w:hyperlink
-    contenedor = p
-    if enlace:
-        contenedor = el('w:hyperlink', **{'w:anchor': enlace})
-        p.append(contenedor)
-
+    # Cada tramo puede tener su propio link: (texto, negrita, destino). Si no
+    # trae destino usa el de la celda. Cada corrida con destino va en su
+    # propio w:hyperlink, asi una celda puede tener varios links sin que se
+    # desordene el texto.
     tramos = texto if isinstance(texto, list) else [(str(texto), negrita)]
-    for txt, bold in tramos:
+    for tramo in tramos:
+        txt, bold = tramo[0], tramo[1]
+        destino = (tramo[2] if len(tramo) > 2 else None) or enlace
         if txt == '':
             continue
         r = el('w:r')
@@ -810,7 +816,7 @@ def celda(texto, ancho, fill, *, negrita=False, color=None, gridspan=None,
             r_pr.append(el('w:bCs'))
         if color:
             r_pr.append(el('w:color', **{'w:val': color}))
-        if subrayado:
+        if subrayado and destino:
             r_pr.append(el('w:u', **{'w:val': 'single'}))
         medida = tam or TAM
         r_pr.append(el('w:sz', **{'w:val': medida}))
@@ -823,7 +829,12 @@ def celda(texto, ancho, fill, *, negrita=False, color=None, gridspan=None,
             t.set(qn('xml:space'), 'preserve')
             t.text = linea
             r.append(t)
-        contenedor.append(r)
+        if destino:
+            h = el('w:hyperlink', **{'w:anchor': destino})
+            h.append(r)
+            p.append(h)
+        else:
+            p.append(r)
     if not p.findall(f'.//{W}r'):
         p.append(el('w:r'))
     tc.append(p)
@@ -843,6 +854,18 @@ def fila(celdas, alto=None, encabezado_repetible=False, entera=False):
     for c in celdas:
         tr.append(c)
     return tr
+
+
+def marcar_destino(tbl, nombre, bid):
+    """Pone un marcador (destino de un link interno) en el primer parrafo de
+    la tabla, que es la banda con el titulo. Va en la fila original, no en
+    sus repeticiones, asi que el link lleva a la primera hoja del turno."""
+    p = tbl.find(f'.//{W}p')
+    if p is None:
+        return
+    pos = 1 if p.find(W + 'pPr') is not None else 0
+    p.insert(pos, el('w:bookmarkStart', **{'w:id': str(bid), 'w:name': nombre}))
+    p.append(el('w:bookmarkEnd', **{'w:id': str(bid)}))
 
 
 def pegada_a_la_siguiente(tr):
@@ -1045,17 +1068,34 @@ def tabla_indice(grupos):
                                    negrita=True, color=P['grupo_texto'],
                                    bordes_=B, tam=18)], alto=280))
         for g in dela:
-            texto = f"ANEXO {g['titulo']}"
+            # El titulo del anexo lleva a su principio; cada turno, a su
+            # subtabla. El conteo va en texto plano, sin link.
+            link = (lambda m: m) if INDICE_CLICKEABLE else (lambda m: None)
+            tramos = [(f"ANEXO {g['titulo']}", True, link(g['marcador']))]
+            resto = ''
             if g.get('detalle'):
-                texto += '\n' + g['detalle']
+                resto += '\n' + g['detalle']
             if not g.get('sin_conteo'):
                 n = len(g['regs'])
-                texto += f"\n{n} servicio{'s' if n != 1 else ''}"
+                resto += f"\n{n} servicio{'s' if n != 1 else ''}"
+            if resto:
+                tramos.append((resto, False, None))
+
+            subs = g.get('subtablas') or []
+            if INDICE_TURNOS and subs:
+                tramos.append(('\n', False, None))
+                for k, sub in enumerate(subs):
+                    if k:
+                        tramos.append(('   ·   ', False, None))
+                    etiqueta = ('Sin turno' if sub['turno'] == SIN_TURNO
+                                else sub['turno'])
+                    tramos.append((f"{etiqueta} ({len(sub['regs'])})", False,
+                                   link(sub['marcador'])))
+
             tbl.append(fila([celda(
-                texto, ancho, P['dato'],
+                tramos, ancho, P['dato'],
                 color=P['titulo_fondo'] if INDICE_CLICKEABLE else None,
                 subrayado=INDICE_CLICKEABLE,
-                enlace=g['marcador'] if INDICE_CLICKEABLE else None,
                 bordes_=(P['borde'],) * 4, tam=20)],
                 entera=True))
     return tbl
@@ -1509,6 +1549,16 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
     else:
         imagenes = None
 
+    # Las subtablas de cada anexo se calculan una sola vez: las usan el
+    # indice (para linkear cada turno), el documento y el resumen.
+    for g in grupos:
+        g['subtablas'] = []
+        if SUBTABLAS_POR_TURNO and g['regs'] and not g.get('imagenes'):
+            for t, nombre, lista, campos_sub in subtablas(g['regs'], est, finde):
+                g['subtablas'].append(dict(
+                    turno=t, titulo=nombre, regs=lista, campos=campos_sub,
+                    marcador=f"{g['marcador']}_{re.sub(r'[^A-Za-z0-9]', '', t)}"))
+
     doc = Document(plantilla)
     body = doc.element.body
 
@@ -1547,12 +1597,14 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
 
         if g.get('imagenes'):
             copiados, salteados = anexar_documento(doc, g['imagenes'], marca)
-        elif g['regs'] and SUBTABLAS_POR_TURNO:
-            for _, nombre, lista, campos_sub in subtablas(g['regs'], est,
-                                                          finde):
-                marca.addprevious(tabla_anexo(
-                    f"{g['titulo']}  ·  {nombre}", lista, campos_sub,
-                    orientacion))
+        elif g['regs'] and g['subtablas']:
+            for j, sub in enumerate(g['subtablas']):
+                tbl = tabla_anexo(f"{g['titulo']}  ·  {sub['titulo']}",
+                                  sub['regs'], sub['campos'], orientacion)
+                # El destino del link del indice va en la banda de la
+                # subtabla: el clic cae justo en el titulo del turno.
+                marcar_destino(tbl, sub['marcador'], 1000 + i * 20 + j)
+                marca.addprevious(tbl)
                 marca.addprevious(parrafo(tam=12))
         elif g['regs']:
             marca.addprevious(tabla_anexo(g['titulo'], g['regs'], campos,
@@ -1587,9 +1639,8 @@ def generar(xlsx, ambito, finde, plantilla, salida, orientacion, solo=None):
             continue
         print(f"     {g['titulo']:32s} {len(g['regs']):4d} servicios")
         total += len(g['regs'])
-        if SUBTABLAS_POR_TURNO and g['regs']:
-            partes = [f"{t} {len(l)}" for t, _, l, _ in
-                      subtablas(g['regs'], est, finde)]
+        if g.get('subtablas'):
+            partes = [f"{s['turno']} {len(s['regs'])}" for s in g['subtablas']]
             print(f"        {'  ·  '.join(partes)}")
     print(f"  {'TOTAL':37s} {total:4d}")
     if INCLUIR_ANEXO_IMAGENES and not imagenes and not solo:
