@@ -171,7 +171,7 @@ ABREVIATURAS_BASE = {
 PREFIJO_MISION = True
 
 # Largo maximo de las columnas de texto. None = copiar tal cual.
-MAX_DESCRIPCION = 400
+MAX_DESCRIPCION = 600
 MAX_OBSERVACIONES = 400
 
 # 'MAR A VIE' -> 'MAR-MIE-JUE-VIE'.  Si es False se copia literal.
@@ -219,8 +219,8 @@ CAMPOS_SEMANA = [
     ('dia',           'DIA',           1250, 1450, None),
     ('turno',         'TURNO',          950, 1100, None),
     ('tarea',         'TAREA',         1800, 2350, None),
-    ('descripcion',   'DESCRIPCIÓN',   1950, 3350, None),
-    ('observaciones', 'OBSERVACIONES', 1400, 2200, None),
+    ('descripcion',   'DESCRIPCIÓN',   2200, 4050, None),
+    ('observaciones', 'OBSERV.',       1150, 1500, None),
     ('direccion',     'DIRECCIÓN',     1600, 2300, None),
     ('hora',          'HORA',           850, 1150, None),
     ('ag_0',          'TM',             380,  500, 'AGENTES POR TURNO'),
@@ -237,8 +237,8 @@ CAMPOS_FINDE = [
     ('dia',           'DIA',           1200, 1400, None),
     ('turno',         'TURNO',          950, 1100, None),
     ('tarea',         'TAREA',         1700, 2250, None),
-    ('descripcion',   'DESCRIPCIÓN',   1750, 3100, None),
-    ('observaciones', 'OBSERVACIONES', 1350, 2200, None),
+    ('descripcion',   'DESCRIPCIÓN',   2000, 3900, None),
+    ('observaciones', 'OBSERV.',       1100, 1400, None),
     ('direccion',     'DIRECCIÓN',     1500, 2100, None),
     ('hora',          'HORA',           820, 1100, None),
     ('ag_0',          'FSD S',          380,  480, 'AGENTES POR TURNO'),

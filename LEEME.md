@@ -130,8 +130,8 @@ Detalles:
 | DIA | `DIA` — los rangos se expanden: `MAR A VIE` → `MAR-MIE-JUE-VIE`. Tolera variantes (`MAR A VIER`, `DE LUN A VIE`, `MIERCOLES`) y respeta las fechas sueltas (`MAR 18/08`) |
 | TURNO | `TURNO` |
 | TAREA | `SERVICIO`. Si `TIPO` = MISION se antepone **MISIÓN** en negrita |
-| DESCRIPCIÓN | `FUNCION`, recortada a 400 caracteres |
-| OBSERVACIONES | `OBSERVACIONES` |
+| DESCRIPCIÓN | `FUNCION`, recortada a 600 caracteres (hoy no se corta ninguna: la más larga tiene 516) |
+| OBSERV. | `OBSERVACIONES`. Columna angosta a propósito: está vacía en dos de cada tres filas |
 | DIRECCIÓN | `UBICACION` + `ALTURA` / `CALLE 2` / `CALLE 3` |
 | HORA | `HORA`, tal como se cargó (ver abajo) |
 | AGENTES | Los del turno de la subtabla. En el finde, uno por día (`SÁB`, `DOM`) |
@@ -210,8 +210,9 @@ Los turnos salen de las columnas `AT ...` de la planilla, no de una lista fija:
 si mañana se agrega un turno, aparece su subtabla sola. Los nombres que se
 muestran se cambian en `NOMBRES_TURNO`.
 
-**Cuesta páginas:** en la orden del 31/08 la semanal pasa de 101 a 128 y la de
-finde de 21 a 29. Para volver al anexo corrido: `--sin-subtablas`.
+**Cuesta páginas:** en la orden del 31/08 la semanal pasa de 101 a 126 y la de
+finde de 21 a 27. Ya está compensado en parte: angostar OBSERV. (vacía en dos
+de cada tres filas) y ensanchar DESCRIPCIÓN achica las filas. Para volver al anexo corrido: `--sin-subtablas`.
 
 ### Orden adentro de cada subtabla
 
